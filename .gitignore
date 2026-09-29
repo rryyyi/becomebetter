@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+runtime/
+models/gguf/
+storage/
+.pytest_cache/
