@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+aiofiles
+pymupdf
+paddleocr
+paddlepaddle
+pillow
+numpy
+httpx
+pydantic

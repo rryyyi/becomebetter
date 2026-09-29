@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>SPE 文件解析 Demo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen p-6">
+<div class="max-w-5xl mx-auto">
+
+  <header class="mb-6">
+    <h1 class="text-2xl font-bold">SPE 语义处理引擎 · 文件解析 Demo</h1>
+    <p class="text-gray-500 text-sm mt-1">
+      上传工业文档 → 解析 → STE/SGE 抽取 → 知识图谱（所有产物落盘持久化）
+    </p>
+  </header>
+
+  <!-- 上传区 -->
+  <div id="dropzone"
+       class="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center
+              bg-white hover:border-blue-400 transition cursor-pointer mb-5">
+    <input type="file" id="fileInput" class="hidden"
+           accept=".pdf,.png,.jpg,.jpeg,.tiff,.bmp">
+    <p class="text-lg text-gray-600">拖拽文件到此处，或点击选择</p>
+    <p class="text-xs text-gray-400 mt-2">支持 PDF / PNG / JPG / TIFF</p>
+  </div>
+
+  <!-- 进度 -->
+  <div id="progressPanel" class="hidden bg-white rounded-lg shadow p-5 mb-5">
+    <div class="flex justify-between mb-2">
+      <span id="stageLabel" class="font-medium text-blue-600">准备中...</span>
+      <span id="progressPct" class="text-gray-500 text-sm">0%</span>
+    </div>
+    <div class="w-full bg-gray-200 rounded-full h-2.5 mb-3">
+      <div id="progressBar" class="bg-blue-500 h-2.5 rounded-full transition-all"
+           style="width: 0%"></div>
+    </div>
+    <p id="stageMessage" class="text-xs text-gray-500 mb-3"></p>
+    <div class="flex flex-wrap gap-3 text-xs">
+      <span data-stage="file_type_detect" class="stage-tag">1. 文件识别</span>
+      <span data-stage="text_extract" class="stage-tag">2. 文本提取</span>
+      <span data-stage="ste" class="stage-tag">3. STE 文本语义</span>
+      <span data-stage="sge" class="stage-tag">4. SGE 图形语义</span>
+      <span data-stage="graph_build" class="stage-tag">5. 图谱构建</span>
+    </div>
+  </div>
+
+  <!-- 磁盘产物 -->
+  <div id="artifactPanel" class="hidden bg-white rounded-lg shadow p-5 mb-5">
+    <h3 class="font-bold mb-3">📦 磁盘产物（已落盘）</h3>
+    <ul id="artifactList" class="text-sm space-y-1 font-mono text-gray-700 break-all"></ul>
+  </div>
+
+  <!-- 结果 -->
+  <div id="resultPanel" class="hidden space-y-5">
+    <div class="bg-white rounded-lg shadow p-5">
+      <h3 class="font-bold mb-2">📄 Document IR 统计</h3>
+      <p id="irStats" class="text-sm text-gray-600"></p>
+    </div>
+    <div class="bg-white rounded-lg shadow p-5">
+      <h3 class="font-bold mb-3">🔗 知识图谱 · 实体</h3>
+      <div id="entityList" class="flex flex-wrap gap-2"></div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-5">
+      <h3 class="font-bold mb-3">🔀 知识图谱 · 关系</h3>
+      <ul id="relationList" class="text-sm text-gray-700 space-y-1"></ul>
+    </div>
+  </div>
+
+  <!-- 文档列表 -->
+  <div class="bg-white rounded-lg shadow p-5 mt-6">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-bold">📚 已上传文档</h3>
+      <button onclick="loadDocuments()" class="text-xs text-blue-500">刷新</button>
+    </div>
+    <div id="docList" class="space-y-2 text-sm"></div>
+  </div>
+
+</div>
+
+<style>
+  .stage-tag { padding: 2px 8px; border-radius: 4px; background: #f3f4f6; color: #6b7280; }
+  .stage-tag.active { background: #dbeafe; color: #1d4ed8; font-weight: 600; }
+</style>
+
+<script>
+const API = "http://localhost:8000/api/v1";
+let pollTimer = null;
+
+// ── 上传 ──
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+dropzone.onclick = () => fileInput.click();
+dropzone.ondragover = e => { e.preventDefault(); dropzone.classList.add("border-blue-500"); };
+dropzone.ondragleave = () => dropzone.classList.remove("border-blue-500");
+dropzone.ondrop = e => {
+  e.preventDefault();
+  dropzone.classList.remove("border-blue-500");
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+};
+fileInput.onchange = () => { if (fileInput.files[0]) upload(fileInput.files[0]); };
+
+async function upload(file) {
+  document.getElementById("resultPanel").classList.add("hidden");
+  document.getElementById("artifactPanel").classList.add("hidden");
+  document.getElementById("progressPanel").classList.remove("hidden");
+
+  const form = new FormData();
+  form.append("file", file);
+
+  try {
+    const resp = await fetch(`${API}/upload/`, { method: "POST", body: form });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    poll(data.parse_task_id);
+  } catch (e) {
+    document.getElementById("stageLabel").textContent = "上传失败: " + e.message;
+  }
+}
+
+// ── 轮询任务状态 ──
+function poll(taskId) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch(`${API}/parse/tasks/${taskId}`);
+      const task = await resp.json();
+      renderTask(task);
+
+      if (task.status === "completed") {
+        clearInterval(pollTimer);
+        await renderArtifacts(task.document_id);
+        await renderGraph(task.document_id);
+        loadDocuments();
+      }
+      if (task.status === "failed") {
+        clearInterval(pollTimer);
+        document.getElementById("stageLabel").textContent = "❌ 解析失败";
+        document.getElementById("stageMessage").textContent = task.error || "";
+      }
+    } catch (e) { /* 忽略轮询错误 */ }
+  }, 800);
+}
+
+function renderTask(task) {
+  const pct = Math.round((task.progress || 0) * 100);
+  document.getElementById("progressBar").style.width = pct + "%";
+  document.getElementById("progressPct").textContent = pct + "%";
+  document.getElementById("stageMessage").textContent = task.message || "";
+
+  const stageText = {
+    "queued": "排队中",
+    "file_type_detect": "识别文件类型",
+    "text_extract": "提取文本和图像",
+    "ste": "STE 文本语义引擎",
+    "sge": "SGE 图形语义引擎",
+    "graph_build": "构建知识图谱",
+    "done": "✅ 处理完成",
+    "error": "❌ 处理失败",
+  }[task.stage] || task.stage;
+  document.getElementById("stageLabel").textContent = stageText;
+
+  document.querySelectorAll(".stage-tag").forEach(el => {
+    el.classList.toggle("active", el.dataset.stage === task.stage);
+  });
+}
+
+// ── 展示磁盘产物 ──
+async function renderArtifacts(documentId) {
+  const resp = await fetch(`${API}/documents/${documentId}`);
+  const data = await resp.json();
+  const list = document.getElementById("artifactList");
+  list.innerHTML = "";
+  for (const [k, v] of Object.entries(data.artifacts || {})) {
+    const li = document.createElement("li");
+    li.textContent = `${k}: ${v}`;
+    list.appendChild(li);
+  }
+  document.getElementById("artifactPanel").classList.remove("hidden");
+}
+
+// ── 展示知识图谱 ──
+async function renderGraph(documentId) {
+  const resp = await fetch(`${API}/documents/${documentId}/graph`);
+  const graph = await resp.json();
+
+  document.getElementById("irStats").textContent =
+    `实体 ${graph.stats?.entity_count || 0} 个，关系 ${graph.stats?.relation_count || 0} 条`;
+
+  const entityList = document.getElementById("entityList");
+  entityList.innerHTML = "";
+  (graph.entities || []).forEach(e => {
+    const span = document.createElement("span");
+    const color = e.source === "ste" ? "bg-blue-100 text-blue-700"
+              : e.source === "sge" ? "bg-purple-100 text-purple-700"
+              : "bg-green-100 text-green-700";
+    span.className = `${color} px-3 py-1 rounded-full text-sm`;
+    span.textContent = `${e.name} (${e.type || "?"})`;
+    entityList.appendChild(span);
+  });
+
+  const relList = document.getElementById("relationList");
+  relList.innerHTML = "";
+  (graph.relations || []).forEach(r => {
+    const li = document.createElement("li");
+    li.textContent = `${r.from} ──[${r.type}]──> ${r.to}`;
+    relList.appendChild(li);
+  });
+
+  document.getElementById("resultPanel").classList.remove("hidden");
+}
+
+// ── 文档列表 ──
+async function loadDocuments() {
+  const resp = await fetch(`${API}/documents/`);
+  const docs = await resp.json();
+  const list = document.getElementById("docList");
+  list.innerHTML = "";
+  if (!docs.length) {
+    list.innerHTML = '<p class="text-gray-400">暂无文档</p>';
+    return;
+  }
+  docs.forEach(d => {
+    const div = document.createElement("div");
+    div.className = "flex justify-between items-center p-2 bg-gray-50 rounded";
+    div.innerHTML = `
+      <span>${d.file_name}
+        <span class="text-gray-400 text-xs">(${d.document_id.slice(0,8)})</span>
+      </span>
+      <button class="text-xs text-blue-500"
+              onclick="renderArtifacts('${d.document_id}');renderGraph('${d.document_id}')">
+        查看产物/图谱
+      </button>
+    `;
+    list.appendChild(div);
+  });
+}
+
+loadDocuments();
+</script>
+</body>
+</html>
