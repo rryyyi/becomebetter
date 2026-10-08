@@ -1,6 +1,6 @@
 """API 请求/响应数据模型"""
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 
 class UploadResponse(BaseModel):
@@ -24,3 +24,50 @@ class TaskStatus(BaseModel):
     error: Optional[str] = None
     artifacts: Optional[Dict[str, str]] = None   # 产物文件路径清单
     updated_at: Optional[str] = None
+
+
+class Evidence(BaseModel):
+    source_type: str
+    source_id: str
+    quote: str
+    page: Optional[int] = None
+    location: Optional[Dict[str, Any]] = None
+    score: float = 0.0
+
+
+class DiagnosisRequest(BaseModel):
+    symptom: str
+    device_id: Optional[str] = None
+    context: Dict[str, Any] = {}
+    top_k: int = 8
+
+
+class CandidateCause(BaseModel):
+    rank: int
+    cause: str
+    possibility: float
+    status: str = "待验证"
+    evidence: List[Evidence] = []
+    verification_steps: List[str] = []
+    rationale: str = ""
+
+
+class DiagnosisResponse(BaseModel):
+    diagnosis_id: str
+    normalized_symptom: str
+    query_variants: List[str]
+    causes: List[CandidateCause]
+    retrieval: Dict[str, Any] = {}
+    created_at: str
+
+
+class EvaluationRequest(BaseModel):
+    dataset_path: Optional[str] = None
+
+
+class EvaluationResponse(BaseModel):
+    evaluation_id: str
+    metrics: Dict[str, float]
+    failures: List[Dict[str, Any]] = []
+    recommendations: List[str] = []
+    created_at: str

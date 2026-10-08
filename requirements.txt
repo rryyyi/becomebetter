@@ -9,3 +9,6 @@ pillow
 numpy
 httpx
 pydantic
+python-docx
+openpyxl
+scikit-learn

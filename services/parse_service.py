@@ -11,6 +11,8 @@ from services.extractor_image import extract_image
 from services.ste_service import extract_text_semantics
 from services.sge_service import extract_graphical_semantics
 from services.graph_builder import build_graph
+from services.index_service import index_document
+from services.extractor_structured import extract_docx, extract_xlsx, extract_archive
 
 
 async def run_parse_pipeline(document_id: str, task_id: str,
@@ -44,6 +46,12 @@ async def run_parse_pipeline(document_id: str, task_id: str,
             ir = extract_pdf(file_path)
         elif ext in ("png", "jpg", "jpeg", "tiff", "bmp"):
             ir = extract_image(file_path)
+        elif ext == "docx":
+            ir = extract_docx(file_path)
+        elif ext in ("xlsx", "xlsm"):
+            ir = extract_xlsx(file_path)
+        elif ext in ("zip", "eplan", "tia"):
+            ir = extract_archive(file_path) if ext == "zip" else extract_archive(file_path)
         else:
             raise ValueError(f"暂不支持的文件类型: {ext}")
 
@@ -51,6 +59,7 @@ async def run_parse_pipeline(document_id: str, task_id: str,
         store.save_ir(document_id, ir)
         store.save_blocks(document_id, ir["blocks"])
         store.save_images(document_id, ir["images"])
+        index_document(document_id, ir)
 
         # 汇总 OCR 文本落盘
         ocr_text = "\n".join(img.get("ocr_text", "") for img in ir["images"])

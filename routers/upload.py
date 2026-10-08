@@ -14,6 +14,10 @@ from services.parse_service import run_parse_pipeline
 router = APIRouter(prefix="/api/v1/upload", tags=["upload"])
 
 
+def _find_duplicate(file_hash: str):
+    return next((m for m in store.list_all_meta() if m.get("file_hash") == file_hash), None)
+
+
 @router.post("/", response_model=UploadResponse)
 async def upload_document(
     background_tasks: BackgroundTasks,
@@ -47,6 +51,15 @@ async def upload_document(
             file_hash.update(chunk)
             file_size += len(chunk)
             await f.write(chunk)
+
+    duplicate = _find_duplicate(file_hash)
+    if duplicate:
+        save_path.unlink(missing_ok=True)
+        return UploadResponse(
+            document_id=duplicate["document_id"], file_name=duplicate["file_name"],
+            file_size=duplicate["file_size"], file_hash=file_hash,
+            parse_task_id="", duplicate=True,
+        )
 
     # 保存元数据
     meta = {

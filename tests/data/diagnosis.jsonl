@@ -1,0 +1,2 @@
+{"symptom":"电机无法启动","expected":["电机","启动"]}
+{"symptom":"PLC输入点没有反馈信号","expected":["PLC","反馈"]}
